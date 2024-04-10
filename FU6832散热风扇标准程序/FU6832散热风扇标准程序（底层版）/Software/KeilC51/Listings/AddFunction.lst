@@ -1,0 +1,736 @@
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 1   
+
+
+C51 COMPILER V9.53.0.0, COMPILATION OF MODULE ADDFUNCTION
+OBJECT MODULE PLACED IN .\Objects\AddFunction.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\User\source\Application\AddFunction.c LARGE OMF2 OPTIMIZE(8,SPEED) BR
+                    -OWSE INCDIR(..\FU68xx_Hardware_Driver\Include;..\User\include) DEBUG PRINT(.\Listings\AddFunction.lst) TABS(2) OBJECT(.\
+                    -Objects\AddFunction.obj)
+
+line level    source
+
+   1          /* --------------------------- (C) COPYRIGHT 2020 Fortiortech ShenZhen -----------------------------
+   2              File Name      : AddFunction.c
+   3              Author         : Fortiortech  Appliction Team
+   4              Version        : V1.0
+   5              Date           : 2020-07-04
+   6              Description    : This file contains .C file function used for Motor Control.
+   7          ----------------------------------------------------------------------------------------------------
+   8                                                 All Rights Reserved
+   9          ------------------------------------------------------------------------------------------------- */
+  10          #include "FU68xx_4.h"
+  11          #include "MyProject.h"
+  12          
+  13          
+  14          
+  15          
+  16          /* Private variables ---------------------------------------------------------*/
+  17          
+  18          PWMINPUTCAL        idata   mcPwmInput;
+  19          CurrentVarible     idata   mcCurVarible;
+  20          FOCCTRL            xdata   mcFocCtrl;
+  21          ADCSample_TypeDef  xdata   ADCSampling;
+  22          MCRAMP             xdata   mcSpeedRamp;
+  23          MotorFRTypeDef     xdata   mcFRState;
+  24          VSPINPUTCAL        idata   mcVspInput;
+  25          extern uint16 DELL_costMode_SlowWolk(MCRAMP *);
+  26          
+  27          uint16 MotorControlVSP;
+  28          uint16 MotorSpeedVSP;
+  29          uint16 PWM_Curve_Duty = 0;
+  30          uint8 SVPM5FlagTrigger  = 0;
+  31          uint16 Open_TailWind_Count = 0;
+  32          uint16 Open_TailWind_Flag = 0;
+  33          
+  34          uint16 F_Stall_Value = 0;
+  35          
+  36          
+  37          #if (Watt_Limit_Enable == 1)
+                uint16 Watt_Limit_LPF_Voltage = 0;
+                int32  Watt_Limit_32Bits_Value = 0;
+                uint16 Watt_Limit_Current      = 0;
+                int16  Watt_Limit_Iq           = 0;
+              #endif
+  43          /* -------------------------------------------------------------------------------------------------
+  44              Function Name  : Abs_F32
+  45              Description    : 对变量取32位的绝对值
+  46              Date           : 2020-04-10
+  47              Parameter      : value: [输入/出]
+  48          ------------------------------------------------------------------------------------------------- */
+  49          uint32 Abs_F32(int32 value)
+  50          {
+  51   1        if(value < 0) return (-value);
+  52   1        else          return (value);
+  53   1      }
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 2   
+
+  54          
+  55          
+  56          /* -------------------------------------------------------------------------------------------------
+  57              Function Name  : APP_DIV
+  58              Description    : 将所有用到除法的地方，放在同一个中断，以避免中断串扰
+  59              Date           : 2020-04-10
+  60              Parameter      : None
+  61          ------------------------------------------------------------------------------------------------- */
+  62          void APP_DIV(void)
+  63          {
+  64   1      //  if( mcPwmInput.PWMDivFlag == 1)  //启动除法器，避免与过调值中的除法冲突
+  65   1      //  {
+  66   1      //    DivQ_L_MDU(mcPwmInput.PWMCompareUpdate, 0x0000, mcPwmInput.PWMARRUpdate, mcPwmInput.PWMDuty);
+  67   1      //    mcPwmInput.PWMDivFlag = 0;
+  68   1      //  }
+  69   1      }
+  70          
+  71          
+  72          int16 QOUT_Value_revise = 0;
+  73          
+  74          uint16 SVPWM_Trans_Time = 0;
+  75          uint16 SVPWM_Trans_Flag = 0;
+  76          
+  77          uint16 TorqueLoopTime_Flag = 0;
+  78          
+  79          uint16 Open_FOC_UQFlag = 0;
+  80          uint16 Open_FOC_UQTransTime = 0;
+  81          
+  82          int16 SVPWM5_Value = 0;
+  83          int16 SVPWM5_Value1 = 0;
+  84          
+  85          uint8 FOC_TSMIN_Change_Flag = 0;
+  86          uint16 FOC_TSMIN_Change_Count = 0;
+  87          uint16 FOC_TSMIN_Value = 0;
+  88          
+  89          uint16 DQKP_Value = 0;
+  90          uint16 DQKI_Value = 0;
+  91          
+  92          uint16 FG_Standard_Value = 0;
+  93          uint32 FG_Standard_LPF_Value = 0;
+  94          uint8  FG_Standard_Count = 0;
+  95          uint16 FG_ARR_Value = 0;
+  96          /* -------------------------------------------------------------------------------------------------
+  97              Function Name  : Speed_response
+  98              Description    : 速度响应函数，可根据需求加入控制环，如恒转矩控制、恒转速�
+             -��制、恒功率控制
+  99              Date           : 2020-04-10
+ 100              Parameter      : None
+ 101          ------------------------------------------------------------------------------------------------- */
+ 102          int16 FocIqTemp = 0;
+ 103          void Speed_response(void)
+ 104          {
+ 105   1        if((mcState == mcRun) || (mcState == mcStop))
+ 106   1        {
+ 107   2          switch(mcFocCtrl.CtrlMode)
+ 108   2          {
+ 109   3          case 0:
+ 110   3          {
+ 111   4          if(TailWindDetect.TailWindStartFlag == 1)
+ 112   4          {
+ 113   5            if(++TailWindDetect.TailWindFocIqChangeDelay >= 1)
+ 114   5            {
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 3   
+
+ 115   6              TailWindDetect.TailWindFocIqChangeDelay = 1;
+ 116   6        
+ 117   6              FocIqTemp = FOC_IQREF;
+ 118   6              if((FocIqTemp+25) < IQ_TailWind_CCW_CURRENT2)
+ 119   6              {
+ 120   7                FocIqTemp+=25;
+ 121   7                mcFocCtrl.mcIqref = FocIqTemp;
+ 122   7                FOC_IQREF = mcFocCtrl.mcIqref;
+ 123   7                mcFocCtrl.State_Count = 1200;
+ 124   7              }
+ 125   6            }
+ 126   5          }
+ 127   4            if(mcFocCtrl.SpeedFlt > Motor_Loop_Speed)
+ 128   4            {
+ 129   5          TailWindDetect.TailWindFocIqChangeDelay = 0;
+ 130   5          TailWindDetect.TailWindStartFlag = 0;       
+ 131   5          SVPM5FlagTrigger = 0;
+ 132   5          if(mcFocCtrl.State_Count == 0)
+ 133   5          {
+ 134   6            mcFocCtrl.CtrlMode = 1;
+ 135   6          }
+ 136   5              #if (OUTLOOP_Enable == 1)
+ 137   5              {
+ 138   6                if(BEMFDetect.BEMFStartDelayStatus == 0)
+ 139   6                {
+ 140   7                  mcSpeedRamp.ActualValue = mcFocCtrl.SpeedFlt;
+ 141   7                }
+ 142   6                else
+ 143   6                {
+ 144   7                  BEMFDetect.BEMFStartDelayStatus = 0; 
+ 145   7                  mcSpeedRamp.ActualValue = BEMFDetect.BEMFSpeed;
+ 146   7                }
+ 147   6               
+ 148   6              }
+ 149   5              #endif
+ 150   5      
+ 151   5              if(BEMFDetect.BEMFBrakeStepFlag != 0)//逆风刹车则不减电流
+ 152   5          {
+ 153   6            mcFocCtrl.mcIqref = IQ_Tailwind_RUN_CURRENT_HIGH;
+ 154   6              }
+ 155   5          else
+ 156   5          {
+ 157   6            if((BEMFDetect.BEMF_Function_Flag == 2)&&(BEMFDetect.BEMFBrakeFlag != 1))
+ 158   6            {
+ 159   7              mcFocCtrl.mcIqref = IQ_TailWind_CCW_Run_CURRENT;
+ 160   7            }
+ 161   6            else if(BEMFDetect.BEMFBrakeFlag == 1)
+ 162   6            {
+ 163   7              mcFocCtrl.mcIqref = IQ_TailWind_CCW_Run_CURRENT>>2;
+ 164   7            }
+ 165   6            else
+ 166   6            {
+ 167   7              mcFocCtrl.mcIqref = IQ_RUN_CURRENT;
+ 168   7            }
+ 169   6          }
+ 170   5              PI0_UKH = mcFocCtrl.mcIqref;
+ 171   5              PI1_UKH = mcFocCtrl.mcIqref;
+ 172   5              PI2_UKH = mcFocCtrl.mcIqref;
+ 173   5              PI3_UKH = mcFocCtrl.mcIqref;
+ 174   5          FOC_IQREF = mcFocCtrl.mcIqref;
+ 175   5              mcFocCtrl.TorqueLoopTime = 0;
+ 176   5            }
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 4   
+
+ 177   4          }
+ 178   3          break;
+ 179   3          case 1:
+ 180   3          {
+ 181   4            mcFocCtrl.TorqueLoopTime++;
+ 182   4            if(mcFocCtrl.TorqueLoopTime > SPEED_REFRESH_TIME)
+ 183   4            {
+ 184   5              mcFocCtrl.TorqueLoopTime = 0;
+ 185   5              #if (OUTLOOP_Enable == 0)
+                      {
+                        mcFocCtrl.mcIqref = FOC_IQREF;
+                        if (FOC_IQREF < QOUTMAXVALUE)
+                        {
+                          mcFocCtrl.mcIqref += QOUTINC;
+                          if (mcFocCtrl.mcIqref > QOUTMAXVALUE)
+                          {
+                            mcFocCtrl.mcIqref = QOUTMAXVALUE;
+                          }
+                          FOC_IQREF = mcFocCtrl.mcIqref;
+                        }
+                        else if (FOC_IQREF > QOUTMAXVALUE)
+                        {
+                          mcFocCtrl.mcIqref -= QOUTINC;
+                          if (mcFocCtrl.mcIqref < QOUTMAXVALUE)
+                          {
+                            mcFocCtrl.mcIqref = QOUTMAXVALUE;
+                          }
+                          FOC_IQREF = mcFocCtrl.mcIqref;
+                        }
+              
+                      }
+                      #elif (OUTLOOP_Enable == 1)
+ 209   5              {
+ 210   6                /*-------------------修正低壓電流過衝----------------------*/
+ 211   6            if( Open_TailWind_Count >= OUTloop_trans_time)
+ 212   6            {
+ 213   7              Open_TailWind_Flag = 1; //運轉PWM命令開始接收旗標
+ 214   7              FOC_EKP = OBSW_KP_GAIN_RUN4;             // 估算器里的PI的KP
+ 215   7              FOC_EKI = OBSW_KI_GAIN_RUN4;             // 估算器里的PI的KI
+ 216   7              PI3_KP  = SPEED_KP;   //SKP;
+ 217   7              PI3_KI  = SPEED_KI;   //SKI;
+ 218   7              FOC_OMEKLPF = SPEED_KLPF;
+ 219   7            }
+ 220   6            if(Open_TailWind_Count >= 8)
+ 221   6            {
+ 222   7              
+ 223   7            }
+ 224   6            if(Open_TailWind_Count >= OUTloop_trans_time+5)
+ 225   6            {             
+ 226   7              #if (RUNSVPWM5_Enable == 1)
+                      {         
+                        runSVPWM5_Function();
+                      }
+                      #endif
+ 231   7      
+ 232   7              
+ 233   7              #if (FOC_TSMIN_Close_Enable == 1)
+                      {
+                        FOC_TSMIN_Close_Function();
+                      }
+                      #endif
+ 238   7              if (FOC_DQKP > DQKP)
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 5   
+
+ 239   7              {
+ 240   8                FOC_DQKP = FOC_DQKP - _Q12(0.1);
+ 241   8              }
+ 242   7              else
+ 243   7              {
+ 244   8                FOC_DQKP = DQKP;
+ 245   8              }
+ 246   7              if (FOC_DQKI > DQKI)
+ 247   7              {
+ 248   8                FOC_DQKI = FOC_DQKI - _Q15(0.01);
+ 249   8              }
+ 250   7              else
+ 251   7              {
+ 252   8                FOC_DQKI = DQKI;
+ 253   8              }
+ 254   7              DQKI_Value = FOC_DQKI;
+ 255   7              DQKP_Value = FOC_DQKP;                  
+ 256   7                
+ 257   7            }
+ 258   6            else if(Open_TailWind_Count < OUTloop_trans_time + 15)
+ 259   6            {
+ 260   7              Open_TailWind_Count++; //運轉PWM命令開始接收旗標計數器
+ 261   7            } 
+ 262   6                  if(FOC_QMAX < (QOUTMAX - _Q15(0.005))) //防止PWM給定後的過衝
+ 263   6                  {
+ 264   7                    FOC_QMAX        += _Q15(0.005);
+ 265   7                    FOC_QMIN        += _Q15(-0.005);
+ 266   7                  }
+ 267   6                  else
+ 268   6                  {
+ 269   7                    FOC_QMAX        =  QOUTMAX;
+ 270   7                    FOC_QMIN        = -QOUTMAX;
+ 271   7                  }
+ 272   6                  
+ 273   6                  BEMFDetect.BEMFBrakeFlag = 0;
+ 274   6                  BEMFDetect.BEMFBrakeStepFlag = 0;
+ 275   6                  
+ 276   6                  if(AC_Lose_Flag == 0)
+ 277   6                  {
+ 278   7                    //PI3_UKMAX = SOUTMAX;
+ 279   7                    if(PI3_UKMAX <= (SOUTMAX - I_Value(0.008)))//防止順風過衝
+ 280   7                    {
+ 281   8                      PI3_UKMAX       +=I_Value(0.008);
+ 282   8                    }
+ 283   7                  }
+ 284   6                  else if(AC_Lose_Flag == 2)
+ 285   6                  {
+ 286   7                    //PI3_UKMAX = AC_Lose_Limit_Power_Value;
+ 287   7                    if(PI3_UKMAX <= (AC_Lose_Limit_Power_Value - I_Value(0.008)))//防止順風過衝
+ 288   7                    {
+ 289   8                      PI3_UKMAX       +=I_Value(0.008);
+ 290   8                    }
+ 291   7                  }
+ 292   6              
+ 293   6                /*-------------------------------------------------------------*/
+ 294   6                mc_ramp(&mcSpeedRamp);
+ 295   6                FOC_IQREF = HW_One_PI(mcSpeedRamp.ActualValue - mcFocCtrl.SpeedFlt);
+ 296   6              }
+ 297   5              #endif //END OUTLoop_Mode
+ 298   5            }
+ 299   4          }
+ 300   3          break;
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 6   
+
+ 301   3          }
+ 302   2        }
+ 303   1        if(mcState == mcRun)
+ 304   1        {
+ 305   2          if(mcFocCtrl.RunStateCnt < 15000)
+ 306   2          {
+ 307   3            mcFocCtrl.RunStateCnt++;
+ 308   3          }
+ 309   2          else
+ 310   2          {
+ 311   3            BEMFDetect.BEMFCCWFlag = 0;
+ 312   3          }
+ 313   2        }
+ 314   1      }
+ 315          uint8 mc_ramp_Flag = 2;
+ 316          /* -------------------------------------------------------------------------------------------------
+ 317              Function Name  : Slowdown_Response_Function
+ 318              Description    :
+ 319              Date           : 2020-05-29
+ 320              Parameter      : None
+ 321          ------------------------------------------------------------------------------------------------- */
+ 322          void Slowdown_Response_Function(void)
+ 323          {
+ 324   1        static uint16 prev_Target = 0;
+ 325   1        if (FOC__UQ > _Q15(0.97) && (((int16)mcSpeedRamp.TargetValue - (int16)mcFocCtrl.SpeedFlt) > RPM2SpeedFlt
+             -(1500)))
+ 326   1        {
+ 327   2          if (abs((int16)prev_Target - (int16)mcSpeedRamp.TargetValue) > RPM2SpeedFlt(500))
+ 328   2          {
+ 329   3            mcSpeedRamp.ActualValue = mcFocCtrl.SpeedFlt + RPM2SpeedFlt(200.0);
+ 330   3            prev_Target = mcSpeedRamp.TargetValue;
+ 331   3          }
+ 332   2        }
+ 333   1      }
+ 334          /* -------------------------------------------------------------------------------------------------
+ 335              Function Name  : mc_ramp
+ 336              Description    :
+ 337              Date           : 2020-05-29
+ 338              Parameter      : hSpeedramp: [输入/出]
+ 339          ------------------------------------------------------------------------------------------------- */
+ 340          void mc_ramp(MCRAMP *hSpeedramp)
+ 341          {
+ 342   1        
+ 343   1        #if (OUTLOOP_Enable == 1)
+ 344   1        if(mcFocCtrl.SpeedFlt < mcSpeedRamp.TargetValue)
+ 345   1        {
+ 346   2      //    if ((mcSpeedRamp.TargetValue - mcFocCtrl.SpeedFlt) > _Q15((MOTOR_MAXSPEED * 0.5) / MOTOR_SPEED_BASE)
+             -)
+ 347   2      //    {
+ 348   2      //      hSpeedramp->IncValue = IncValue_H;
+ 349   2      //    }
+ 350   2      //    else if ((mcSpeedRamp.TargetValue - mcFocCtrl.SpeedFlt) > _Q15((MOTOR_MAXSPEED * 0.1) / MOTOR_SPEED_
+             -BASE))
+ 351   2      //    {
+ 352   2      //      hSpeedramp->IncValue = IncValue_M;
+ 353   2      //    }
+ 354   2      //    else if ((mcSpeedRamp.TargetValue - mcFocCtrl.SpeedFlt) > _Q15((MOTOR_MAXSPEED * 0.05) / MOTOR_SPEED
+             -_BASE))
+ 355   2      //    {
+ 356   2      //      hSpeedramp->IncValue = IncValue_L;
+ 357   2      //    }
+ 358   2      //    else
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 7   
+
+ 359   2      //    {
+ 360   2      //      hSpeedramp->IncValue = 5;
+ 361   2      //    }
+ 362   2          
+ 363   2          if ((mcSpeedRamp.TargetValue - FOC__EOME) > _Q15((MOTOR_MAXSPEED * 0.8) / MOTOR_SPEED_BASE))
+ 364   2          {
+ 365   3            hSpeedramp->IncValue = 90;
+ 366   3          }
+ 367   2          else if ((mcSpeedRamp.TargetValue - FOC__EOME) > _Q15((MOTOR_MAXSPEED * 0.7) / MOTOR_SPEED_BASE))
+ 368   2          {
+ 369   3            hSpeedramp->IncValue = 80;
+ 370   3          }
+ 371   2          else if ((mcSpeedRamp.TargetValue - FOC__EOME) > _Q15((MOTOR_MAXSPEED * 0.6) / MOTOR_SPEED_BASE))
+ 372   2          {
+ 373   3            hSpeedramp->IncValue = 70;
+ 374   3          }
+ 375   2          else if ((mcSpeedRamp.TargetValue - FOC__EOME) > _Q15((MOTOR_MAXSPEED * 0.5) / MOTOR_SPEED_BASE))
+ 376   2          {
+ 377   3            hSpeedramp->IncValue = 60;
+ 378   3          }
+ 379   2          else if ((mcSpeedRamp.TargetValue - FOC__EOME) > _Q15((MOTOR_MAXSPEED * 0.4) / MOTOR_SPEED_BASE))
+ 380   2          {
+ 381   3            hSpeedramp->IncValue = 50;
+ 382   3          } 
+ 383   2          else if ((mcSpeedRamp.TargetValue - FOC__EOME) > _Q15((MOTOR_MAXSPEED * 0.3) / MOTOR_SPEED_BASE))
+ 384   2          {
+ 385   3            hSpeedramp->IncValue = 40;
+ 386   3          }
+ 387   2          else if ((mcSpeedRamp.TargetValue - FOC__EOME) > _Q15((MOTOR_MAXSPEED * 0.2) / MOTOR_SPEED_BASE))
+ 388   2          {
+ 389   3            hSpeedramp->IncValue = 30;
+ 390   3          }
+ 391   2          else if ((mcSpeedRamp.TargetValue - FOC__EOME) > _Q15((MOTOR_MAXSPEED * 0.1) / MOTOR_SPEED_BASE))
+ 392   2          {
+ 393   3            hSpeedramp->IncValue = 20;
+ 394   3          }     
+ 395   2          else
+ 396   2          {
+ 397   3            hSpeedramp->IncValue = 10;
+ 398   3          }
+ 399   2      
+ 400   2          #if (AC_Lose_Function_Enable == 1)
+ 401   2          {
+ 402   3            hSpeedramp->IncValue = DELL_costMode_SlowWolk(hSpeedramp);
+ 403   3          }
+ 404   2          #endif
+ 405   2          
+ 406   2          
+ 407   2          
+ 408   2          if(hSpeedramp->ActualValue + hSpeedramp->IncValue < hSpeedramp->TargetValue)// && hSpeedramp->ActualVa
+             -lue - mcFocCtrl.SpeedFlt < 200)
+ 409   2          {
+ 410   3            hSpeedramp->ActualValue += hSpeedramp->IncValue;
+ 411   3          }
+ 412   2          else if (hSpeedramp->TargetValue - hSpeedramp->ActualValue < 40)
+ 413   2          {
+ 414   3            hSpeedramp->ActualValue = hSpeedramp->TargetValue;
+ 415   3          }
+ 416   2          else
+ 417   2          {
+ 418   3            //保留
+ 419   3          }
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 8   
+
+ 420   2        }
+ 421   1        else
+ 422   1        {
+ 423   2          if ((hSpeedramp->ActualValue - mcSpeedRamp.TargetValue) > _Q15((MOTOR_MAXSPEED * 0.8) / MOTOR_SPEED_BA
+             -SE))
+ 424   2          {
+ 425   3            hSpeedramp->DecValue = 50;
+ 426   3          }
+ 427   2          else if ((hSpeedramp->ActualValue - mcSpeedRamp.TargetValue) > _Q15((MOTOR_MAXSPEED * 0.3) / MOTOR_SPE
+             -ED_BASE))
+ 428   2          {
+ 429   3            hSpeedramp->DecValue = 35;
+ 430   3          }
+ 431   2          else if ((hSpeedramp->ActualValue - mcSpeedRamp.TargetValue) > _Q15((MOTOR_MAXSPEED * 0.15) / MOTOR_SP
+             -EED_BASE))
+ 432   2          {
+ 433   3            hSpeedramp->DecValue = 20;
+ 434   3          }
+ 435   2          else
+ 436   2          {
+ 437   3            hSpeedramp->DecValue = 20;
+ 438   3          }
+ 439   2          
+ 440   2          //hSpeedramp->DecValue = DecValue_H;
+ 441   2          
+ 442   2          if(hSpeedramp->ActualValue - hSpeedramp->DecValue > hSpeedramp->TargetValue && hSpeedramp->ActualValue
+             - > hSpeedramp->DecValue)
+ 443   2          {
+ 444   3            hSpeedramp->ActualValue -= hSpeedramp->DecValue;
+ 445   3          }
+ 446   2          else if (hSpeedramp->ActualValue != hSpeedramp->TargetValue)
+ 447   2          {
+ 448   3            hSpeedramp->ActualValue = hSpeedramp->TargetValue;
+ 449   3          }
+ 450   2          else
+ 451   2          {
+ 452   3            //hSpeedramp->ActualValue -= hSpeedramp->DecValue;
+ 453   3          }
+ 454   2        }
+ 455   1        #endif
+ 456   1      }
+ 457          
+ 458          /* -------------------------------------------------------------------------------------------------
+ 459              Function Name  : HW_One_PI
+ 460              Description    : PI控制
+ 461              Date           : 2020-04-10
+ 462              Parameter      : Xn1: [输入/出]
+ 463          ------------------------------------------------------------------------------------------------- */
+ 464          int16 HW_One_PI(int16 Xn1)
+ 465          {
+ 466   1      
+ 467   1        PI3_EK = Xn1;
+ 468   1        SetBit(PI_CR, PI3STA);
+ 469   1        while(ReadBit(PI_CR, PIBSY));
+ 470   1        return PI3_UKH;
+ 471   1      }
+ 472          
+ 473          
+ 474          /* -------------------------------------------------------------------------------------------------
+ 475              Function Name  : StarRampDealwith
+ 476              Description    : 爬坡處理副程式
+ 477              Date           : 2020-04-10
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 9   
+
+ 478              Parameter      : None
+ 479          ------------------------------------------------------------------------------------------------- */
+ 480          void StarRampDealwith(void)
+ 481          {
+ 482   1        if((mcState == mcRun))
+ 483   1        {
+ 484   2          if(mcFocCtrl.State_Count == 650)
+ 485   2          {
+ 486   3            FOC_EKP = OBSW_KP_GAIN_RUN;              // 估算器里的PI的KP
+ 487   3            FOC_EKI = OBSW_KI_GAIN_RUN;              // 估算器里的PI的KI
+ 488   3          }
+ 489   2          else if(mcFocCtrl.State_Count == 600)
+ 490   2          {
+ 491   3            FOC_EKP = OBSW_KP_GAIN_RUN1;             // 估算器里的PI的KP
+ 492   3            FOC_EKI = OBSW_KI_GAIN_RUN1;             // 估算器里的PI的KI
+ 493   3          }
+ 494   2          else if(mcFocCtrl.State_Count == 500)
+ 495   2          {
+ 496   3            FOC_EKP = OBSW_KP_GAIN_RUN2;             // 估算器里的PI的KP
+ 497   3            FOC_EKI = OBSW_KI_GAIN_RUN2;             // 估算器里的PI的KI
+ 498   3          }
+ 499   2          else if(mcFocCtrl.State_Count == 300)
+ 500   2          {
+ 501   3            FOC_EKP = OBSW_KP_GAIN_RUN3;             // 估算器里的PI的KP
+ 502   3            FOC_EKI = OBSW_KI_GAIN_RUN3;             // 估算器里的PI的KI
+ 503   3          }
+ 504   2          else if(mcFocCtrl.State_Count == 100)
+ 505   2          {
+ 506   3            FOC_EKP = OBSW_KP_GAIN_RUN4;             // 估算器里的PI的KP
+ 507   3            FOC_EKI = OBSW_KI_GAIN_RUN4;             // 估算器里的PI的KI
+ 508   3          }
+ 509   2          else
+ 510   2          {
+ 511   3            //保留
+ 512   3          }
+ 513   2        }
+ 514   1      }
+ 515          
+ 516          
+ 517          /**
+ 518            * @brief  單電阻五段式運行切換函式
+ 519            * @note   單電阻五段式運行切換，不得在使用Coast Mode 狀態下啟用。
+ 520            * @return none
+ 521            */
+ 522          void runSVPWM5_Function(void)
+ 523          {
+ 524   1        if ((mcFocCtrl.SpeedFlt > _Q15((SVPWM5_SWITCH_THRESHOLD + SVPWM5_BUFFER_THRESHOLD) / MOTOR_SPEED_BASE) &
+             -& SVPM5FlagTrigger == 0))
+ 525   1        {
+ 526   2          #if (SVPWM5_ATT_LEVEL != 0)
+ 527   2          {
+ 528   3            PI3_UKH = (FOC_IQREF - (FOC_IQREF >> SVPWM5_ATT_LEVEL));
+ 529   3            SVPM5FlagTrigger = 1;
+ 530   3            SetBit(FOC_CR2, F5SEG);
+ 531   3          }
+ 532   2          #endif
+ 533   2        }
+ 534   1        else if (mcFocCtrl.SpeedFlt < _Q15((SVPWM5_SWITCH_THRESHOLD - SVPWM5_BUFFER_THRESHOLD) / MOTOR_SPEED_BAS
+             -E) && SVPM5FlagTrigger == 1 )
+ 535   1        {
+ 536   2          SVPM5FlagTrigger = 0;
+ 537   2          ClrBit(FOC_CR2, F5SEG);
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 10  
+
+ 538   2        }
+ 539   1      }
+ 540          
+ 541          
+ 542          /* -------------------------------------------------------------------------------------------------
+ 543              Function Name  : FOC_TSMIN_Close_Function
+ 544              Description    : 單電阻採樣關窗控制副程式
+ 545              Date           : 2021-05-20
+ 546              Parameter      : None
+ 547          ------------------------------------------------------------------------------------------------- */
+ 548          void FOC_TSMIN_Close_Function(void)
+ 549          {   
+ 550   1        if(FOC__UQ > _Q15(0.17)) //4cm 約在input PWM Duty0~3%切換
+ 551   1        {
+ 552   2            FOC_TSMIN = 0;
+ 553   2            FOC_TSMIN_Value = 0;
+ 554   2            FOC_TSMIN_Change_Flag = 1;
+ 555   2        }
+ 556   1        else
+ 557   1        {
+ 558   2          if((FOC_TSMIN_Change_Flag == 1)||(FOC_TSMIN_Change_Flag == 3))
+ 559   2          {
+ 560   3            if(((FOC__UQ < _Q15(0.15)))||(FOC_TSMIN_Change_Flag == 3))
+ 561   3            {
+ 562   4              //FOC_TSMIN = (uint16)(_Q16 / PWM_CYCLE * (PWM_DEADTIME + 0.6) / 16);
+ 563   4                if(FOC_TSMIN_Value <= 100)
+ 564   4                {
+ 565   5                  FOC_TSMIN_Value +=3;
+ 566   5                }
+ 567   4                else if(FOC_TSMIN_Value > 100)
+ 568   4                {
+ 569   5                  FOC_TSMIN_Value = 105;
+ 570   5                }
+ 571   4              FOC_TSMIN = FOC_TSMIN_Value;
+ 572   4              FOC_TSMIN_Change_Flag = 3;
+ 573   4            }
+ 574   3          }
+ 575   2          else if ((FOC_TSMIN_Change_Flag == 0)||(FOC_TSMIN_Change_Flag == 2))
+ 576   2          {
+ 577   3            //FOC_TSMIN = (uint16)(_Q16 / PWM_CYCLE * (PWM_DEADTIME + 0.6) / 16);
+ 578   3            FOC_TSMIN_Value = 105;
+ 579   3            FOC_TSMIN = FOC_TSMIN_Value;
+ 580   3            FOC_TSMIN_Change_Flag = 2;
+ 581   3          }
+ 582   2        }
+ 583   1      }
+ 584          
+ 585          
+ 586          void CurrentLimiter_Process(void)
+ 587          {
+ 588   1        #if (CURRENT_LIMITER_SOURCE == USED_AD1)
+                {
+                  LPF_MDU(ADC1_DR, 10, mcCurVarible.ADC_IBUS, mcCurVarible.ADC_IBUS_LSB);
+                }
+                #elif (CURRENT_LIMITER_SOURCE == USED_AD3)
+                {
+                  LPF_MDU(ADC3_DR, 10, mcCurVarible.ADC_IBUS, mcCurVarible.ADC_IBUS_LSB);
+                }
+                #elif (CURRENT_LIMITER_SOURCE == USED_AD13)
+ 597   1        {
+ 598   2          LPF_MDU(ADC13_DR, 10, mcCurVarible.ADC_IBUS, mcCurVarible.ADC_IBUS_LSB);
+ 599   2        }
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 11  
+
+ 600   1        #endif
+ 601   1       
+ 602   1        mcCurVarible.ADC_IBUS_Offset = mcCurVarible.ADC_IBUS ;
+ 603   1        mcCurVarible.ADC_IBUS_Value = mcCurVarible.ADC_IBUS_Offset - (mcCurOffset.Iw_busOffset - 16383);
+ 604   1        mcCurVarible.FOC_IQREF_Value = FOC_IQREF;
+ 605   1        if(mcCurVarible.ADC_IBUS_Value >= CurrentLimit_Val)
+ 606   1        {
+ 607   2          mcCurVarible.FOC_IQREF_Value = mcCurVarible.FOC_IQREF_Value - 1;
+ 608   2          PI3_UKMAX = mcCurVarible.FOC_IQREF_Value;
+ 609   2          FOC_IQREF = mcCurVarible.FOC_IQREF_Value;
+ 610   2        }
+ 611   1        else
+ 612   1        {
+ 613   2          if(PI3_UKMAX <= (SOUTMAX - 1))//防止順風過衝
+ 614   2          {
+ 615   3            PI3_UKMAX += 1;
+ 616   3          }
+ 617   2        }
+ 618   1      }
+ 619          
+ 620          
+ 621          /*---------------------------------------------------------------------------*/
+ 622          /* Name   : void Watt_Limit_Function(void)
+ 623          /* Input  : NO
+ 624          /* Output : NO
+ 625          /* Description:新功耗限制
+ 626          /*---------------------------------------------------------------------------*/
+ 627          void Watt_Limit_Function(void)
+ 628          {
+ 629   1        #if (CURRENT_LIMITER_SOURCE == USED_AD1)
+                {
+                  LPF_MDU(ADC1_DR, 10, mcCurVarible.ADC_IBUS, mcCurVarible.ADC_IBUS_LSB);
+                }
+                #elif (CURRENT_LIMITER_SOURCE == USED_AD3)
+                {
+                  LPF_MDU(ADC3_DR, 10, mcCurVarible.ADC_IBUS, mcCurVarible.ADC_IBUS_LSB);
+                }
+                #elif (CURRENT_LIMITER_SOURCE == USED_AD13)
+ 638   1        {
+ 639   2          LPF_MDU(ADC13_DR, 10, mcCurVarible.ADC_IBUS, mcCurVarible.ADC_IBUS_LSB);
+ 640   2        }
+ 641   1        #endif
+ 642   1        
+ 643   1        mcFocCtrl.Voltage_Value = ((((float)(((float)(ADCSampling.DcBus_Flt) / 32767.0) * 5)) / RV2) * (RV1 + RV
+             -2));
+ 644   1        mcFocCtrl.Current_Value = ((float)(mcFocCtrl.Watt_Limit_Current - 16383)* ((float)(HW_ADC_REF / 2.0 / HW
+             -_AMPGAIN / HW_RSHUNT) / 16383.0));
+ 645   1      
+ 646   1      //  LPF_MDU(ADC1_DR, 10, mcCurVarible.ADC_IBUS, mcCurVarible.ADC_IBUS_LSB);
+ 647   1        mcCurVarible.ADC_IBUS_Offset = mcCurVarible.ADC_IBUS ;
+ 648   1        mcCurVarible.ADC_IBUS_Value = mcCurVarible.ADC_IBUS_Offset - (mcCurOffset.Iw_busOffset - 16383);
+ 649   1        mcFocCtrl.Watt_Limit_Current = mcCurVarible.ADC_IBUS_Value;
+ 650   1      
+ 651   1        mcFocCtrl.Watt_Limit_Value = mcFocCtrl.Voltage_Value * mcFocCtrl.Current_Value;
+ 652   1      
+ 653   1        mcCurVarible.FOC_IQREF_Value = FOC_IQREF;
+ 654   1        
+ 655   1        if(mcFocCtrl.Watt_Limit_Value >= (Watt_Limit_Target - Watt_Limit_Modeify_Value))
+ 656   1        {
+ 657   2          if(mcCurVarible.FOC_IQREF_Value >= LIMIT_MIN_CURRENT)
+ 658   2          {    
+ 659   3            mcCurVarible.FOC_IQREF_Value = mcCurVarible.FOC_IQREF_Value - 5;
+C51 COMPILER V9.53.0.0   ADDFUNCTION                                                       04/09/2024 13:54:53 PAGE 12  
+
+ 660   3            PI3_UKMAX = mcCurVarible.FOC_IQREF_Value;
+ 661   3            FOC_IQREF = mcCurVarible.FOC_IQREF_Value;      
+ 662   3          }
+ 663   2        }
+ 664   1        else
+ 665   1        {
+ 666   2          if(PI3_UKMAX <= (SOUTMAX - 1))//防止順風過衝
+ 667   2          {
+ 668   3            PI3_UKMAX += 1;
+ 669   3          }
+ 670   2        }
+ 671   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2809    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =    157       7
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =     45    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

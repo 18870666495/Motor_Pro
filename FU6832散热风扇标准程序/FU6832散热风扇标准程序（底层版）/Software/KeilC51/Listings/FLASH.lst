@@ -1,0 +1,113 @@
+C51 COMPILER V9.53.0.0   FLASH                                                             04/09/2024 13:54:56 PAGE 1   
+
+
+C51 COMPILER V9.53.0.0, COMPILATION OF MODULE FLASH
+OBJECT MODULE PLACED IN .\Objects\FLASH.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\User\source\Hardware\FLASH.c LARGE OMF2 OPTIMIZE(8,SPEED) BROWSE INCD
+                    -IR(..\FU68xx_Hardware_Driver\Include;..\User\include) DEBUG PRINT(.\Listings\FLASH.lst) TABS(2) OBJECT(.\Objects\FLASH.o
+                    -bj)
+
+line level    source
+
+   1          /* --------------------------- (C) COPYRIGHT 2020 Fortiortech ShenZhen -----------------------------
+   2              File Name      : FLASH.c
+   3              Author         : Fortiortech  Appliction Team
+   4              Version        : V1.0
+   5              Date           : 2020-04-11
+   6              Description    : This file contains .C file function used for Motor Control.
+   7          ----------------------------------------------------------------------------------------------------  
+   8                                                 All Rights Reserved
+   9          ------------------------------------------------------------------------------------------------- */
+  10          /******************************************************************************///Including Header Files
+  11          #include "FU68xx_4.h"
+  12          #include "MyProject.h"
+  13          /******************************************************************************///Define Macro
+  14          #define FLASH_DON_TOCH_SECTOR_ADDR      0x3f80
+  15          /******************************************************************************///Define Global Symbols
+  16          /******************************************************************************///Function Subject
+  17          static bool _FLASH_Ctrl(uint16 wAddr, uint8 ucCmd, uint8 ucDat)
+  18          {
+  19   1          FLA_CR = FLAEN | ucCmd;
+  20   1          FLA_KEY = 0x5a;
+  21   1          FLA_KEY = 0x1f;
+  22   1          *(uint8 xdata *)wAddr = ucDat;
+  23   1          FLA_CR |= FLAACT;
+  24   1          if ((FLA_CR & FLAERR) == FLAERR) return false;
+  25   1      
+  26   1          return true;
+  27   1      }
+  28          
+  29          ETypeFlashSta FLASH_Erase(uint16 wAddr)
+  30          {
+  31   1          bool bEATmp;
+  32   1          bool bError;
+  33   1      
+  34   1          if (wAddr >= FLASH_DON_TOCH_SECTOR_ADDR) return FLAERR_ADDR;
+  35   1          if (FLA_KEY == 0x02) return FLAERR_KEY;
+  36   1      
+  37   1          bEATmp = EA;
+  38   1          EA = 0;
+  39   1          bError = !_FLASH_Ctrl(wAddr, FLAPRE, 0x00) || !_FLASH_Ctrl(wAddr, FLAERS, 0x00);
+  40   1      
+  41   1          EA = bEATmp;
+  42   1          return bError ? FLAERR_DAT : FLA_NORMAL;
+  43   1      }
+  44          
+  45          ETypeFlashSta FLASH_Progarm(uint16 wAddr, uint8 ucDat)
+  46          {
+  47   1          bool bEATmp;
+  48   1          bool bError;
+  49   1      
+  50   1          if (wAddr >= FLASH_DON_TOCH_SECTOR_ADDR) return FLAERR_ADDR;
+  51   1          if (FLA_KEY == 0x02) return FLAERR_KEY;
+  52   1      
+  53   1          bEATmp = EA;
+C51 COMPILER V9.53.0.0   FLASH                                                             04/09/2024 13:54:56 PAGE 2   
+
+  54   1          EA = 0;
+  55   1          bError = _FLASH_Ctrl(wAddr, 0x00, ucDat);
+  56   1      
+  57   1          EA = bEATmp;
+  58   1          return bError ? FLA_NORMAL : FLAERR_DAT;
+  59   1      }
+  60          
+  61          ETypeFlashSta FLASH_Progarms(uint16 wAddr, uint8 *ucpDat, uint16 wLen)
+  62          {
+  63   1          bool bEATmp;
+  64   1          bool bError;
+  65   1          uint16 w;
+  66   1      
+  67   1          if (wAddr >= FLASH_DON_TOCH_SECTOR_ADDR) return FLAERR_ADDR;
+  68   1          if (FLA_KEY == 0x02) return FLAERR_KEY;
+  69   1      
+  70   1          bEATmp = EA;
+  71   1          EA = 0;
+  72   1          bError = true;
+  73   1          for (w = 0; w != wLen; w++)
+  74   1          {
+  75   2              bError = _FLASH_Ctrl(wAddr + w, 0x00, *(ucpDat + w));       // 不直接break, 目的是均衡磨�
+             -��
+  76   2          }
+  77   1      
+  78   1          EA = bEATmp;
+  79   1          return bError ? FLA_NORMAL : FLAERR_DAT;
+  80   1      }
+  81          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    326    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----      12
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

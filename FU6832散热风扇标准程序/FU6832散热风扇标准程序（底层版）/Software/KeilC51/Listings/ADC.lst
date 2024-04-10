@@ -1,0 +1,90 @@
+C51 COMPILER V9.53.0.0   ADC                                                               04/09/2024 13:54:55 PAGE 1   
+
+
+C51 COMPILER V9.53.0.0, COMPILATION OF MODULE ADC
+OBJECT MODULE PLACED IN .\Objects\ADC.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\User\source\Hardware\ADC.c LARGE OMF2 OPTIMIZE(8,SPEED) BROWSE INCDIR
+                    -(..\FU68xx_Hardware_Driver\Include;..\User\include) DEBUG PRINT(.\Listings\ADC.lst) TABS(2) OBJECT(.\Objects\ADC.obj)
+
+line level    source
+
+   1          /* --------------------------- (C) COPYRIGHT 2020 Fortiortech ShenZhen -----------------------------
+   2              File Name      : ADC.c
+   3              Author         : Fortiortech  Appliction Team
+   4              Version        : V1.1
+   5              Date           : 2020-07-06
+   6              Description    : This file contains .C file function used for Motor Control.
+   7          ----------------------------------------------------------------------------------------------------  
+   8                                                 All Rights Reserved
+   9          ------------------------------------------------------------------------------------------------- */
+  10          #include "FU68xx_4.h"
+  11          #include "MyProject.h"
+  12          
+  13          void ADC_Init(void)
+  14          {
+  15   1          /********************ADC 端口模拟功能设置************************/
+  16   1        SetBit(P2_AN , PIN0); //AD0 P20 CH open--IU--固定
+  17   1        SetBit(P2_AN , PIN3); //AD1 P23 CH open--IV--固定 
+  18   1        SetBit(P2_AN , PIN5); //AD3 P25 CH open
+  19   1        SetBit(P2_AN , PIN7); //AD4 P27 CH open--IBUS/IW--固定
+  20   1        SetBit(P1_AN , PIN5); //AD13 P15 CH open
+  21   1      //  
+  22   1        #if (SPEED_MODE == VSPMODE)
+  23   1        {
+  24   2          SetBit(P3_AN , PIN4);
+  25   2          SetBit(ADC_MASK, CH7EN);
+  26   2        }
+  27   1        #endif
+  28   1      //  set_csr(P3_AN , PIN2);  //AD5 P32 CH open
+  29   1      //  set_csr(P3_AN , PIN3);  //AD6 P33 CH open
+  30   1      //  set_csr(P3_AN , PIN4);  //AD7 P34 CH open
+  31   1      //  set_csr(P2_AN , PIN1);  //AD8 P21 CH open
+  32   1      //  set_csr(P1_AN , PIN6);  //AD9 P16 CH open
+  33   1      //  set_csr(P1_AN , PIN4);  //AD10 P14 CH open
+  34   1      //  set_csr(P2_AN , PIN6);  //AD11 P26 CH open
+  35   1      //  set_csr(P1_AN , PIN3);  //AD12 P13 CH open
+  36   1      //  set_csr(P1_AN , PIN5);  //AD13 P15 CH open
+  37   1        /****************************************************************/
+  38   1        SetBit(ADC_MASK , CH0EN | CH1EN | CH2EN | CH3EN | CH4EN | CH13EN | CH14EN);   //通道使能
+  39   1      
+  40   1        //#20200706新增
+  41   1        #if (HW_RV_MODE == RV6P5)
+                {
+                  SetBit(ADC_CR , ADCRATIO);                // 設定 ADC 分壓比 6.5倍
+                }
+                #elif (HW_RV_MODE == RV12)
+                {
+                  ClrBit(ADC_CR , ADCRATIO);                // 設定 ADC 分壓比 12倍 
+                }
+                #elif (HW_RV_MODE == RVEXT)
+  50   1        {
+  51   2          SetBit(P2_AN,  PIN4);
+  52   2        }
+  53   1        #endif
+  54   1        //#
+C51 COMPILER V9.53.0.0   ADC                                                               04/09/2024 13:54:55 PAGE 2   
+
+  55   1        
+  56   1        SetBit(ADC_CR , ADCALIGN);      //ADC数据次高位对齐使能0-->Disable 1-->Enable
+  57   1        ClrBit(ADC_CR , ADCIE);         //ADC中断使能
+  58   1        SetBit(ADC_CR , ADCEN);         //Enable ADC0
+  59   1      }
+  60          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    102    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

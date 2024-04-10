@@ -1,0 +1,202 @@
+C51 COMPILER V9.53.0.0   UART                                                              04/09/2024 13:54:57 PAGE 1   
+
+
+C51 COMPILER V9.53.0.0, COMPILATION OF MODULE UART
+OBJECT MODULE PLACED IN .\Objects\UART.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\User\source\Hardware\UART.c LARGE OMF2 OPTIMIZE(8,SPEED) BROWSE INCDI
+                    -R(..\FU68xx_Hardware_Driver\Include;..\User\include) DEBUG PRINT(.\Listings\UART.lst) TABS(2) OBJECT(.\Objects\UART.obj)
+
+line level    source
+
+   1          /* USER CODE BEGIN Header */
+   2          /**
+   3            ******************************************************************************
+   4            * @file           : UART.c
+   5            * @brief          : UART 相關功能
+   6            * @version        : 1.0
+   7            * @copyright      : Fortior Tech
+   8            ******************************************************************************
+   9            * @attention
+  10            *
+  11            * This software is licensed under terms that can be found in the LICENSE file
+  12            * in the root directory of this software component.
+  13            * If no LICENSE file comes with this software, it is provided AS-IS.
+  14            *
+  15            ******************************************************************************
+  16            */
+  17          /* USER CODE END Header */
+  18          /* 通用標頭檔 ------------------------------------------------------------------*/
+  19          #include "FU68xx_4.h"
+  20          
+  21          /* 專案標頭檔 ------------------------------------------------------------------*/
+  22          #include "MyProject.h"
+  23          /* 區域定義 --------------------------------------------------------------------*/
+  24          #define UART_READ_TIMEOUT                (40)                                  /*!< (單位: mS) UART 讀�
+             -��逾時時間  [範圍: 10 ~ 1000]*/
+  25          #define UART1_MODE                       (UART_MODE_ONEWIRE)                   /*!< UART1 傳輸模式  @p
+             -aram (UART_MODE_ONEWIRE) 單線模式 @param (UART1_MODE_TX_RX) 一般模式*/
+  26          
+  27          /* 結構宣告---------------------------------------------------------------------*/
+  28          /* 變數宣告 --------------------------------------------------------------------*/
+  29          UART_HandleTypeDef UART1;
+  30          
+  31          uint8 __U1Tx_Position = 0;
+  32          
+  33          /* 函數宣告 --------------------------------------------------------------------*/
+  34          
+  35          /**
+  36            * @addtogroup UART 函數
+  37            * @{
+  38           */
+  39          
+  40          /**
+  41            * @brief  UART1 初始化函數
+  42            * @retval 無
+  43            */
+  44          void UART1_Init(void)
+  45          {
+  46   1        #if (UART1_MODE == UART_MODE_ONEWIRE)
+  47   1        {
+  48   2          SetBit(P0_PU , P06);
+  49   2        }
+  50   1        #endif
+  51   1        
+  52   1        SetBit(PH_SEL, UART1EN);
+C51 COMPILER V9.53.0.0   UART                                                              04/09/2024 13:54:57 PAGE 2   
+
+  53   1        
+  54   1        PI2C_UT11 = 0;
+  55   1        PI2C_UT10 = 0;
+  56   1        
+  57   1        REN     = 1;
+  58   1        UT_MOD0 = UART1_MODE;                                          // 設定 Rx Tx 模式
+  59   1        UT_MOD1 = UART_WORDLENGTH_8B;                                  // 設定資料位寬
+  60   1        ES0     = UART1_USED_TI;                                       // 設定中斷模式
+  61   1        SetUART_BAUD(UT_BAUD, UART_BAUD_CUSTOM(9600.0));               // 設定傳輸速率
+  62   1      } 
+  63          
+  64          
+  65          /**
+  66            * @brief  UART2 初始化函數
+  67            * @retval 無
+  68            */
+  69          void UART2_Init(void)
+  70          {
+  71   1        SetBit(PH_SEL , UART2EN);
+  72   1        
+  73   1        PSPI_UT21 = 0;
+  74   1        PSPI_UT20 = 0;
+  75   1        
+  76   1        SetReg(UT2_CR,    UT2REN,              0);                    // 啟用 Uart2 輸入
+  77   1        SetReg(UT2_CR,    UT2MOD0,             UART2_MODE_TX_RX);     // 設定 Rx Tx 模式
+  78   1        SetReg(UT2_CR,    UT2MOD1,             UART_WORDLENGTH_8B);   // 設定資料位寬
+  79   1        SetReg(UT2_BAUD, (UART2CH | UART2IEN), UART2_CHANNEL_1_TI);   // 設定中斷模式
+  80   1        
+  81   1        SetBit(P0_OE , P00);
+  82   1        SetBit(P0_PU , P00);
+  83   1        GP00 = 1;
+  84   1        
+  85   1        SetUART_BAUD(UT2_BAUD, UART_BAUD_9600);                       // 設定傳輸速率
+  86   1      }
+  87          
+  88          
+  89          /**
+  90            * @brief  UART1 發送函數
+  91            * @retval 無
+  92            */
+  93          void UART1_Transmit(uint8 *Arr, uint8 Len)
+  94          {
+  95   1        __U1Tx_Position = 0;
+  96   1        UART1.Tx_DATA = Arr;
+  97   1        UART1.tLen = Len;
+  98   1        UT_DR = UART1.Tx_DATA[__U1Tx_Position++];
+  99   1        UART1.TxFlag = 1;
+ 100   1      }
+ 101          
+ 102          
+ 103          /**
+ 104            * @brief  UART 計數函數
+ 105            * @retval 無
+ 106            */
+ 107          void Uart_CountEvent(void)
+ 108          {
+ 109   1        if (UART1.rLen != 0)
+ 110   1        {
+ 111   2          if (UART1.RxTimeOut < UART_READ_TIMEOUT)
+ 112   2          {
+ 113   3            UART1.RxTimeOut++;
+ 114   3          }
+C51 COMPILER V9.53.0.0   UART                                                              04/09/2024 13:54:57 PAGE 3   
+
+ 115   2          else
+ 116   2          {
+ 117   3            UART1.RxFlag    = 1;
+ 118   3            UART1.RxTimeOut = 0;
+ 119   3          }
+ 120   2         }
+ 121   1      }
+ 122          
+ 123          
+ 124          /**
+ 125            * @brief  UART1 接收事件
+ 126            * @note   該函數僅在中斷中受到調用
+ 127            * @retval 無
+ 128            */
+ 129          void Uart1_ReceiveEvent(void)
+ 130          {
+ 131   1        if (UART1.RxFlag == 0)
+ 132   1        {
+ 133   2          UART1.RxTimeOut = 0;
+ 134   2          UART1.Rx_DATA[UART1.rLen++] = UT_DR;
+ 135   2          if (UART1.rLen >= 13)
+ 136   2          {
+ 137   3            UART1.RxFlag = 1;
+ 138   3          }
+ 139   2        }
+ 140   1      }
+ 141          
+ 142          
+ 143          /**
+ 144            * @brief  UART1 傳送事件
+ 145            * @note   該函數僅在中斷中受到調用
+ 146            * @retval 無
+ 147            */
+ 148          void Uart1_TransmitEvent(void)
+ 149          {  
+ 150   1        if (UART1.TxFlag == 1)
+ 151   1        {
+ 152   2          if (__U1Tx_Position >= UART1.tLen)
+ 153   2          {
+ 154   3            UART1.TxFlag = 0;
+ 155   3            __U1Tx_Position =  0;
+ 156   3          }
+ 157   2          else
+ 158   2          {
+ 159   3            UT_DR = UART1.Tx_DATA[__U1Tx_Position++];
+ 160   3          }
+ 161   2        } 
+ 162   1      }
+ 163          
+ 164          /**
+ 165            @}
+ 166          */
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    317    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     24    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+C51 COMPILER V9.53.0.0   UART                                                              04/09/2024 13:54:57 PAGE 4   
+
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

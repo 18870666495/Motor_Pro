@@ -1,0 +1,625 @@
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 1   
+
+
+C51 COMPILER V9.53.0.0, COMPILATION OF MODULE MOTORPROTECT
+OBJECT MODULE PLACED IN .\Objects\MotorProtect.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\User\source\Function\MotorProtect.c LARGE OMF2 OPTIMIZE(8,SPEED) BROW
+                    -SE INCDIR(..\FU68xx_Hardware_Driver\Include;..\User\include) DEBUG PRINT(.\Listings\MotorProtect.lst) TABS(2) OBJECT(.\O
+                    -bjects\MotorProtect.obj)
+
+line level    source
+
+   1          /**
+   2            ******************************************************************************
+   3            * @file           : MotorProtect.c
+   4            * @copyright      : (c) 2022, Fortior Tech
+   5            * @brief          : 
+   6            * @date           : 2023-01-31
+   7            * @version        : 1.0.1
+   8            *
+   9            ******************************************************************************
+  10            * @attention
+  11            *
+  12            * This software is licensed under terms that can be found in the LICENSE file
+  13            * in the root directory of this software component.
+  14            * If no LICENSE file comes with this software, it is provided AS-IS.
+  15            *
+  16            ******************************************************************************
+  17            */  
+  18          /* Includes ------------------------------------------------------------------*/
+  19          #include <FU68xx_4.h>
+  20          
+  21          /* Private includes ----------------------------------------------------------*/
+  22          #include "MyProject.h"
+  23          
+  24          /* Private typedef -----------------------------------------------------------*/
+  25          typedef struct
+  26          {
+  27            uint16 segment;                                                             /*!< 保護偵測輪詢計�
+             -�器 */
+  28            
+  29            uint16 VoltDetecCnt;                                                        /*!< 過欠電壓檢測計�
+             -�器 */
+  30            uint16 VoltRecoverCnt;                                                      /*!< 過欠電壓恢復計�
+             -�器 */
+  31            uint16 CurrentRecoverCnt;                                                   /*!< 過電流恢復計數�
+             -� */
+  32          
+  33            uint16 StallDelayCnt;                                                       /*!< 堵轉延遲計數器 *
+             -/
+  34            uint16 StallDectSpeed;                                                      /*!< 堵轉失速計數器 *
+             -/
+  35            uint16 StallSpeedAndEsCnt;                                                  /*!< 堵轉轉速與反電�
+             -�勢失衡計數器 */
+  36            uint16 FOCUQ_Stall_Count;                                                   /*!< 堵轉 FOC_UQ溢位計�
+             -��器 */
+  37            uint16 StartFocmode;                                                        /*!< 堵轉 長時間在mode
+             -0計數器 */
+  38            uint16 StallReCount;                                                        /*!< 堵轉保護恢復計�
+             -�器 */
+  39          
+  40            uint16 Lphasecnt;                                                           /*!< 欠相保護計數器 *
+             -/
+  41            uint16 AOpencnt ;                                                           /*!< A相欠相計數器 */
+  42            uint16 BOpencnt ;                                                           /*!< B相欠相計數器 */ 
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 2   
+
+  43            uint16 COpencnt ;                                                           /*!< C相欠相計數器 */
+  44            uint16 mcLossPHRecCount;                                                    /*!< 欠相恢復計數器 *
+             -/
+  45          
+  46          }FaultVarible;
+  47          
+  48          
+  49          /* Private define ------------------------------------------------------------*/
+  50          #define Stall_ATOEndTime                      (uint16)((1400) + 10)           /*!< 堵轉檢測用 ATO 逾
+             -時時間 */
+  51          
+  52          /* Private macro -------------------------------------------------------------*/
+  53          /* Private variables ---------------------------------------------------------*/
+  54          //FaultStateType       mcFaultSource;
+  55          motorFault_FlagDef xdata mcFaultSource;
+  56          FaultVarible       idata mcFaultDect;
+  57          ProtectVarible     idata mcProtectTime;
+  58          
+  59          uint16 Stall_Diff_RecoverTime = 0;
+  60          uint16 Stall_CCW_State_Count  = 0;
+  61          
+  62          #if (Stall_retryStart_Enable == 1)
+               uint8 Stall_retryCounter   = 0;
+               uint8 STall_retryIdle_Flag = 0;
+              #endif
+  66          
+  67          /* Private function prototypes -----------------------------------------------*/
+  68          void Fault_phaseLoss(void);
+  69          void Fault_OverUnderVoltage(void);
+  70          void Fault_Detection(void);
+  71          void Fault_Stall(void);
+  72          void FaultProcess(void);
+  73          void Fault_softOverCurrent(CurrentVarible *);
+  74          void Fault_OverCurrentRecover(void);
+  75          
+  76          /* Private user code ---------------------------------------------------------*/
+  77          /**
+  78            * @brief         保護功能相關變數初始化
+  79            * @detail        保護相關變數初始化 @note 本函數調用時務必確認相關變數已完成�
+             -�疊或不再使用。
+  80            * @retval        無
+  81            */
+  82          void faultVarible_Initial(void)
+  83          {
+  84   1        // 函數執行開始
+  85   1        memset(&mcFaultDect,   0, sizeof(FaultVarible));
+  86   1        memset(&mcProtectTime, 0, sizeof(ProtectVarible)); 
+  87   1        // 函數執行結束
+  88   1      }
+  89          
+  90          
+  91          /**
+  92            * @brief         異常檢測輪詢函數
+  93            * @detail        異常檢測使用輪詢方式進行檢測，僅能在 Systick中斷內調用。
+  94            * @retval        無
+  95            */
+  96          void Fault_Detection(void)
+  97          {
+  98   1        // 函數執行開始
+  99   1        mcFaultDect.segment++;
+ 100   1        if(mcFaultDect.segment >= 3)
+ 101   1        {
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 3   
+
+ 102   2          mcFaultDect.segment = 0;
+ 103   2        }
+ 104   1       
+ 105   1        if(mcFaultDect.segment == 0)
+ 106   1        {
+ 107   2          #if (VoltageProtect_Enable == 1)
+ 108   2          {
+ 109   3            Fault_OverUnderVoltage();
+ 110   3          }
+ 111   2          #endif
+ 112   2        }
+ 113   1        else if(mcFaultDect.segment == 1)
+ 114   1        {
+ 115   2          #if (StallProtect_Enable == 1)
+ 116   2          {
+ 117   3            Fault_Stall();
+ 118   3          }
+ 119   2          #endif
+ 120   2        }
+ 121   1        else if(mcFaultDect.segment == 2)
+ 122   1        {
+ 123   2          #if (PhaseLossProtect_Enable == 1)
+ 124   2          {
+ 125   3            Fault_phaseLoss();
+ 126   3          }
+ 127   2          #endif
+ 128   2        }
+ 129   1        
+ 130   1        if(mcState == mcFault)
+ 131   1        {
+ 132   2          switch(mcFaultSource.Source)
+ 133   2          {
+ 134   3            case Hard_OverCurrent:
+ 135   3            case Soft_OverCurrent:
+ 136   3            {
+ 137   4              mcFaultDect.CurrentRecoverCnt++;
+ 138   4              if(mcFaultDect.CurrentRecoverCnt >= OverCurrentRecoverTime)
+ 139   4              {
+ 140   5                BEMFDetect.BEMFBrakeFlag = 0;
+ 141   5                Open_TailWind_Flag       = 0;                      // 未知處理階段，該變數已在 Fault
+             -Process() 函數中清除。
+ 142   5                Open_TailWind_Count      = 0;                      // 未知處理階段，該變數已在 Fault
+             -Process() 函數中清除。
+ 143   5                mcFaultSource.Source = NoFault;
+ 144   5                mcFaultDect.CurrentRecoverCnt  = 0;
+ 145   5              }
+ 146   4              break;
+ 147   4            }
+ 148   3            case SPD_Es_compMethod:
+ 149   3            case StartTimOUT_Method:
+ 150   3            case OUTOfRange_Method:
+ 151   3            {
+ 152   4              if (mcFaultDect.StallReCount != 0)
+ 153   4                mcFaultDect.StallReCount--;
+ 154   4              
+ 155   4              #if (Stall_retryStart_Enable == 1)
+                      {
+                        if (Stall_retryCounter < Stall_retryStart_Count && STall_retryIdle_Flag == 0)
+                        {
+                          Stall_retryCounter++;
+                          mcFaultDect.StallReCount = 0;
+                        }
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 4   
+
+                        else
+                        {
+                          STall_retryIdle_Flag = 1;
+                        }
+                      }
+                      #endif
+ 168   4              
+ 169   4              if(mcFaultDect.StallReCount == 0)
+ 170   4              {
+ 171   5                #if (Stall_retryStart_Enable == 1)
+                        {
+                          STall_retryIdle_Flag = 0;
+                        }
+                        #endif
+ 176   5                
+ 177   5                mcFaultSource.Source = NoFault;
+ 178   5                Open_TailWind_Flag       = 0;                      // 未知處理階段，該變數已在 Fault
+             -Process() 函數中清除。
+ 179   5                Open_TailWind_Count      = 0;                      // 未知處理階段，該變數已在 Fault
+             -Process() 函數中清除。
+ 180   5              }
+ 181   4              break;
+ 182   4            }
+ 183   3            case PhaseLoss:
+ 184   3            {
+ 185   4              if((mcProtectTime.LossPHTimes < 5) && PhaseLossRecoverTime > 0)
+ 186   4              {
+ 187   5                mcFaultDect.mcLossPHRecCount++;
+ 188   5                if(mcFaultDect.mcLossPHRecCount >= PhaseLossRecoverTime)
+ 189   5                {
+ 190   6                  mcFaultDect.AOpencnt = 0;
+ 191   6                  mcFaultDect.BOpencnt = 0;
+ 192   6                  mcFaultDect.COpencnt = 0;
+ 193   6                  mcFaultSource.Source = NoFault;
+ 194   6                }
+ 195   5              }
+ 196   4              else
+ 197   4              {
+ 198   5                mcFaultDect.mcLossPHRecCount = 0;
+ 199   5              }
+ 200   4              break;
+ 201   4            }
+ 202   3            case UnderVoltage:
+ 203   3            case OverVoltage: 
+ 204   3            {
+ 205   4              if((ADCSampling.DcBus_Flt < Volt2DcBus(Over_Recover_Voltage)) && (ADCSampling.DcBus_Flt > Volt2DcB
+             -us(Under_Recover_Voltage)))
+ 206   4              {
+ 207   5                mcFaultDect.VoltRecoverCnt++;
+ 208   5                if(mcFaultDect.VoltRecoverCnt > OverVlotageRecoverTime)
+ 209   5                {
+ 210   6                  mcFaultDect.StallSpeedAndEsCnt = 0;              // 未知處理階段，該變數清除與否
+             -，不足以影響電機運行。
+ 211   6                  mcFocCtrl.State_Count          = 100;
+ 212   6                  Open_TailWind_Flag             = 0;              // 未知處理階段，該變數已在 Fault
+             -Process() 函數中清除。
+ 213   6                  Open_TailWind_Count            = 0;              // 未知處理階段，該變數已在 Fault
+             -Process() 函數中清除。
+ 214   6                  mcFaultSource.Source = NoFault;
+ 215   6                  mcFaultDect.VoltRecoverCnt     = 0;
+ 216   6                }
+ 217   5              }
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 5   
+
+ 218   4              break;
+ 219   4            }
+ 220   3          } 
+ 221   2        }
+ 222   1        
+ 223   1        #if (Stall_retryStart_Enable == 1)
+                {
+                  if (mcFocCtrl.Millis > 1000)
+                  {
+                    STall_retryIdle_Flag = 1;
+                  }
+                  
+                  if (STall_retryIdle_Flag == 1 && Stall_retryCounter != 0)
+                  {
+                    Stall_retryCounter = 0;
+                  }
+                }
+                #endif
+ 236   1        // 函數執行結束
+ 237   1      }
+ 238          
+ 239          
+ 240          /**
+ 241            * @brief         堵轉檢測函數
+ 242            * @detail        堵轉保護檢測相關。 @note 本函數僅能在 Fault_Detection() 函數中被調�
+             -��。
+ 243            * @retval        無
+ 244            */
+ 245          void Fault_Stall(void)
+ 246          {
+ 247   1        // 函數執行開始
+ 248   1        if(BEMFDetect.BEMF_Inverse_Current_Flag == 1)
+ 249   1        {
+ 250   2          Stall_CCW_State_Count = 400;
+ 251   2        }
+ 252   1        else
+ 253   1        {
+ 254   2          Stall_CCW_State_Count = 180;
+ 255   2        }
+ 256   1        
+ 257   1        if((mcState == mcRun) && (mcFocCtrl.Open_DCBus_RetryFlag == 0))
+ 258   1        {
+ 259   2          if(mcFaultDect.StallDelayCnt <= Stall_CCW_State_Count)
+ 260   2          {
+ 261   3            mcFaultDect.StallDelayCnt++;
+ 262   3          }
+ 263   2          else
+ 264   2          {
+ 265   3            /** 條件1 MODE0 時間逾時 **/
+ 266   3            if (mcFocCtrl.CtrlMode == 0)
+ 267   3            {
+ 268   4              mcFaultDect.StartFocmode++;
+ 269   4              if (mcFaultDect.StartFocmode > Stall_ATOEndTime)
+ 270   4              {
+ 271   5                #if (Stall_Diff_RecoverTime_En == 0)
+ 272   5                {
+ 273   6                  mcFaultDect.StallReCount = StallRecoverTime;
+ 274   6                }
+ 275   5                #elif (Stall_Diff_RecoverTime_En == 1)
+                        {
+                          mcFaultDect.StallReCount = (StallRecoverTime + 500);
+                        }
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 6   
+
+                        #endif
+ 280   5                
+ 281   5                mcFaultDect.StartFocmode = 0;
+ 282   5                mcFaultSource.Source = StartTimOUT_Method;
+ 283   5            mcFocCtrl.FaultStopFlag = 0;
+ 284   5              }
+ 285   4            }
+ 286   3            else
+ 287   3            {
+ 288   4              mcFaultDect.StartFocmode = 0;
+ 289   4            }
+ 290   3            
+ 291   3            /** 條件2 FOC__UQ 溢位 **/
+ 292   3            if(FOC__UQ < 500)
+ 293   3            {
+ 294   4              mcFaultDect.FOCUQ_Stall_Count++;
+ 295   4              if(mcFaultDect.FOCUQ_Stall_Count > 20)
+ 296   4              {
+ 297   5                
+ 298   5                #if (Stall_Diff_RecoverTime_En == 0)
+ 299   5                {
+ 300   6                  mcFaultDect.StallReCount = StallRecoverTime;
+ 301   6                }
+ 302   5                #elif (Stall_Diff_RecoverTime_En == 1)
+                        {
+                          mcFaultDect.StallReCount = (StallRecoverTime + 750);
+                        }
+                        #endif
+ 307   5                
+ 308   5                mcFaultDect.FOCUQ_Stall_Count = 0;
+ 309   5                mcFaultSource.Source = UQOverFlow_Method;
+ 310   5            mcFocCtrl.FaultStopFlag = 0;
+ 311   5              }
+ 312   4            }
+ 313   3            else
+ 314   3            {
+ 315   4              mcFaultDect.FOCUQ_Stall_Count = 0;
+ 316   4            }
+ 317   3            
+ 318   3            /** 條件3 電機估算失速 **/
+ 319   3            if((mcFocCtrl.SpeedFlt < Motor_Stall_Min_Speed) || (mcFocCtrl.SpeedFlt > Motor_Stall_Max_Speed))
+ 320   3            {
+ 321   4              mcFaultDect.StallDectSpeed++;
+ 322   4              if(mcFaultDect.StallDectSpeed >=5)
+ 323   4              {
+ 324   5                #if (Stall_Diff_RecoverTime_En == 0)
+ 325   5                {
+ 326   6                  mcFaultDect.StallReCount = StallRecoverTime;
+ 327   6                }
+ 328   5                #elif (Stall_Diff_RecoverTime_En == 1)
+                        {
+                          mcFaultDect.StallReCount = (StallRecoverTime + 248);
+                        }
+                        #endif
+ 333   5                
+ 334   5                mcFaultDect.StallDectSpeed = 0;
+ 335   5                mcFaultSource.Source = SPD_Es_compMethod;
+ 336   5            mcFocCtrl.FaultStopFlag = 0;
+ 337   5              }
+ 338   4            }
+ 339   3            else if (mcFaultDect.StallDectSpeed > 0)
+ 340   3            {
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 7   
+
+ 341   4              mcFaultDect.StallDectSpeed--;
+ 342   4            }
+ 343   3            
+ 344   3            /** 條件4 電機估算轉速與反電動勢異常 **/
+ 345   3            if(mcFocCtrl.SpeedFlt > (((uint32)mcFocCtrl.EsValue) * 3))
+ 346   3            {
+ 347   4              mcFaultDect.StallSpeedAndEsCnt++;
+ 348   4              if(mcFaultDect.StallSpeedAndEsCnt >= StallSensitivity)
+ 349   4              {
+ 350   5                #if (Stall_Diff_RecoverTime_En == 0)
+ 351   5                {
+ 352   6                  mcFaultDect.StallReCount = StallRecoverTime;
+ 353   6                }
+ 354   5                #elif (Stall_Diff_RecoverTime_En == 1)
+                        {
+                          mcFaultDect.StallReCount = (StallRecoverTime + 0);
+                        }
+                        #endif
+ 359   5                
+ 360   5                mcFaultDect.StallSpeedAndEsCnt = 0;
+ 361   5                mcFaultSource.Source = OUTOfRange_Method;
+ 362   5            mcFocCtrl.FaultStopFlag = 0;
+ 363   5              }
+ 364   4            }
+ 365   3            else if(mcFaultDect.StallSpeedAndEsCnt > 0)
+ 366   3            {
+ 367   4              mcFaultDect.StallSpeedAndEsCnt--;
+ 368   4            }
+ 369   3          }
+ 370   2        }
+ 371   1        // 函數執行結束
+ 372   1      }
+ 373          
+ 374          
+ 375          /**
+ 376            * @brief         過欠電壓檢測函數
+ 377            * @detail        過欠電壓檢測相關。 @note 本函數僅能在 Fault_Detection() 函數中被調�
+             -��。
+ 378            * @retval 無
+ 379            */
+ 380          void Fault_OverUnderVoltage(void)
+ 381          {
+ 382   1        static uint8 UV_CNT = 5, OV_CNT = 5;
+ 383   1        // 函數執行開始
+ 384   1        if((mcFaultSource.Source == NoFault))
+ 385   1        {
+ 386   2          if (ADCSampling.DcBus_Flt > Volt2DcBus(Over_Protect_Voltage) || (mcState == mcReady && (ADCSampling.Dc
+             -Bus_Flt > Volt2DcBus(Over_Recover_Voltage))))
+ 387   2          {
+ 388   3            UV_CNT = 5;
+ 389   3            if (OV_CNT != 0)
+ 390   3              OV_CNT--;
+ 391   3            else
+ 392   3            {
+ 393   4              mcFaultSource.Source = OverVoltage;
+ 394   4          mcFocCtrl.FaultStopFlag = 0;
+ 395   4            }
+ 396   3          }
+ 397   2          else if (ADCSampling.DcBus_Flt < Volt2DcBus(Under_Protect_Voltage) || (mcState == mcReady && (ADCSampl
+             -ing.DcBus_Flt < Volt2DcBus(Under_Recover_Voltage))))
+ 398   2          {
+ 399   3            OV_CNT = 5;
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 8   
+
+ 400   3            if (UV_CNT != 0)
+ 401   3              UV_CNT--;
+ 402   3            else
+ 403   3            {
+ 404   4              mcFaultSource.Source = UnderVoltage;
+ 405   4          mcFocCtrl.FaultStopFlag = 0;
+ 406   4            }
+ 407   3          }
+ 408   2          else
+ 409   2          {
+ 410   3            UV_CNT = 5;
+ 411   3            OV_CNT = 5;
+ 412   3          }
+ 413   2        }  
+ 414   1        // 函數執行結束
+ 415   1      }
+ 416          
+ 417          
+ 418          /**
+ 419            * @brief         欠相保護檢測函數
+ 420            * @detail        欠相檢測相關。 @note 本函數僅能在 Fault_Detection() 函數中被調用。
+ 421            * @retval        無
+ 422            */
+ 423          void Fault_phaseLoss(void)
+ 424          {
+ 425   1        // 函數執行開始
+ 426   1        if(mcState == mcRun)
+ 427   1        {
+ 428   2          mcFaultDect.Lphasecnt++;
+ 429   2          if(mcFaultDect.Lphasecnt > 20)
+ 430   2          {
+ 431   3            mcFaultDect.Lphasecnt = 0;
+ 432   3            if(((mcCurVarible.Max_ia > (mcCurVarible.Max_ib * 2)) || (mcCurVarible.Max_ia > (mcCurVarible.Max_ic
+             - * 2)))
+ 433   3                && (mcCurVarible.Max_ia > PhaseLossCurrentValue))
+ 434   3            {
+ 435   4              mcFaultDect.AOpencnt++;
+ 436   4            }
+ 437   3            else if(mcFaultDect.AOpencnt > 0)
+ 438   3            {
+ 439   4              mcFaultDect.AOpencnt--;
+ 440   4            }
+ 441   3      
+ 442   3            if(((mcCurVarible.Max_ib > (mcCurVarible.Max_ia * 2)) || (mcCurVarible.Max_ib > (mcCurVarible.Max_ic
+             - * 2)))
+ 443   3                && (mcCurVarible.Max_ib > PhaseLossCurrentValue))
+ 444   3            {
+ 445   4              mcFaultDect.BOpencnt++;
+ 446   4            }
+ 447   3            else if(mcFaultDect.BOpencnt > 0)
+ 448   3            {
+ 449   4               mcFaultDect.BOpencnt--;
+ 450   4            }
+ 451   3      
+ 452   3            if(((mcCurVarible.Max_ic > (mcCurVarible.Max_ia * 2)) || (mcCurVarible.Max_ic > (mcCurVarible.Max_ib
+             - * 2)))
+ 453   3                && (mcCurVarible.Max_ic > PhaseLossCurrentValue))
+ 454   3            {
+ 455   4              mcFaultDect.COpencnt++;
+ 456   4            }
+ 457   3            else if(mcFaultDect.COpencnt > 0) 
+ 458   3            {
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 9   
+
+ 459   4              mcFaultDect.COpencnt--;
+ 460   4            }
+ 461   3            
+ 462   3            mcCurVarible.Max_ia = 0;
+ 463   3            mcCurVarible.Max_ib = 0;
+ 464   3            mcCurVarible.Max_ic = 0;
+ 465   3            SetBit(FOC_CR2, ICLR);
+ 466   3            if((mcFaultDect.AOpencnt > 9) || (mcFaultDect.BOpencnt > 9) || (mcFaultDect.COpencnt > 9))
+ 467   3            {
+ 468   4              mcProtectTime.LossPHTimes++;
+ 469   4              mcFaultSource.Source = PhaseLoss;
+ 470   4          mcFocCtrl.FaultStopFlag = 0;
+ 471   4            }
+ 472   3          }
+ 473   2        }
+ 474   1        // 函數執行結束
+ 475   1      }
+ 476          
+ 477          
+ 478          /**
+ 479            * @brief         軟體過電流檢測函數
+ 480            * @detail        軟體過電流檢測相關函數。 @note 本函數僅能在 DRV_ISR() 中斷函數中
+             -被調用。
+ 481            * @param[in,out] CurrentVarible *h_Cur  FOC電流採集變數
+ 482            * @retval        無
+ 483            */
+ 484          void Fault_softOverCurrent(CurrentVarible *h_Cur)
+ 485          {
+ 486   1        // 函數執行開始
+ 487   1        if((mcState == mcRun) || (mcState == mcStart))
+ 488   1        {
+ 489   2          h_Cur->Max_ia = FOC__IAMAX;
+ 490   2          h_Cur->Max_ib = FOC__IBMAX;
+ 491   2          h_Cur->Max_ic = FOC__ICMAX;
+ 492   2      
+ 493   2          mcCurVarible.Max_ia = FOC__IAMAX;
+ 494   2          mcCurVarible.Max_ib = FOC__IBMAX;
+ 495   2          mcCurVarible.Max_ic = FOC__ICMAX;
+ 496   2      
+ 497   2          if((FOC__IAMAX >= OverSoftCurrentValue) || (FOC__IBMAX >= OverSoftCurrentValue) || (FOC__ICMAX >= Over
+             -SoftCurrentValue))
+ 498   2          {
+ 499   3            h_Cur->OverCurCnt++;
+ 500   3            if(h_Cur->OverCurCnt >= 3)
+ 501   3            {
+ 502   4              mcFaultSource.Source = Soft_OverCurrent;
+ 503   4          mcFocCtrl.FaultStopFlag = 0;
+ 504   4              h_Cur->Max_ia     = 0;
+ 505   4              h_Cur->Max_ib     = 0;
+ 506   4              h_Cur->Max_ic     = 0;
+ 507   4              h_Cur->OverCurCnt = 0;
+ 508   4            }
+ 509   3          }
+ 510   2          else if (h_Cur->OverCurCnt > 0)
+ 511   2          {
+ 512   3            h_Cur->OverCurCnt--;
+ 513   3          }
+ 514   2        }
+ 515   1        // 函數執行結束
+ 516   1      }
+ 517          
+ 518          
+C51 COMPILER V9.53.0.0   MOTORPROTECT                                                      04/09/2024 13:54:55 PAGE 10  
+
+ 519          /**
+ 520            * @brief         異常處理函數
+ 521            * @detail        電機保護接段相關處理。
+ 522            * @retval        無
+ 523            */
+ 524          void FaultProcess(void)
+ 525          {
+ 526   1        // 函數執行開始
+ 527   1        /** 關閉電機輸出 --開始 **/
+ 528   1        ClrBit(DRV_CR, DRVEN);
+ 529   1        ClrBit(DRV_CR, FOCEN);
+ 530   1        MOE     = 0;
+ 531   1      //  mcState = mcFault;
+ 532   1        /** 關閉電機輸出 --結束 **/
+ 533   1      
+ 534   1        /** 其他處理程序 --開始 **/
+ 535   1        #if (ROTATESIGNAL_TYPE == RD_TYPE)
+                {
+              //    RDFault_Detection();
+                }
+                #endif
+ 540   1        
+ 541   1        mcFocCtrl.CtrlMode  = 0;
+ 542   1        Open_TailWind_Flag  = 0;
+ 543   1        Open_TailWind_Count = 0;
+ 544   1        /** 其他處理程序 --結束 **/
+ 545   1        // 函數執行結束
+ 546   1      }
+ 547          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1535    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =      8    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =     32    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
